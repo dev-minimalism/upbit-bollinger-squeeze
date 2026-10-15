@@ -1,0 +1,20 @@
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["upbit_output_files"]
+
+[tool.ruff.format]
+# 4-space indentation, double quotes (ruff defaults). Formatting is enforced; run `ruff format .`
+indent-style = "space"
+quote-style = "double"
+
+[tool.ruff.lint]
+# Start narrow: errors, pyflakes, import order. Widen once the existing findings are cleaned up.
+select = ["E", "F", "I"]
+# Long Korean f-strings and Telegram message templates routinely exceed the limit.
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

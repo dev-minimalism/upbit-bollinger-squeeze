@@ -62,3 +62,7 @@ htmlcov/
 /trading_monitor.log
 /venv/
 /upbit_trading_monitor.log
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
