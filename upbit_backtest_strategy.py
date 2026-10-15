@@ -97,7 +97,6 @@ def setup_korean_font():
             print("⚠️ 한글 폰트를 찾을 수 없어 기본 폰트를 사용합니다.")
 
         plt.rcParams["axes.unicode_minus"] = False
-        fm._rebuild()
         return font_found
 
     except Exception as e:

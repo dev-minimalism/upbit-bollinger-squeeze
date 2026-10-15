@@ -22,20 +22,20 @@ pytest tests/test_indicators.py::test_monitor_and_backtest_indicators_agree   # 
 ruff format .
 ruff check .
 
-# REQUIRED before running the monitor: logging.FileHandler in upbit_main.py opens
-# upbit_output_files/logs/... at import time and crashes if the directory is missing.
+# Run the realtime monitor (foreground). The log directory is created on start.
+python upbit_main.py                                   # --mode monitor is the default
+python upbit_main.py --strategy balanced               # conservative | balanced | aggressive
+
+# Background. The shell opens the redirect target before Python runs, so create the directory first.
 mkdir -p upbit_output_files/logs
+nohup python upbit_main.py > upbit_output_files/logs/nohup.out 2>&1 &
+kill -TERM <PID>                                       # stop; Ctrl+C in the foreground
 
-# Run the realtime monitor (foreground)
-python upbit_main.py --mode monitor-default
+# Backtest through the same entry point (non-interactive)
+python upbit_main.py --mode backtest --capital 1000000 --days 1095 --strategy aggressive
+python upbit_main.py --mode backtest --days 120        # end-to-end smoke, ~10s, hits the public Upbit API
 
-# Run it in the background (from README.md)
-nohup python upbit_main.py --mode monitor-default > upbit_output_files/logs/nohup.out 2>&1 &
-
-# Stop it
-kill -TERM <PID>   # or Ctrl+C in the foreground
-
-# Run the backtester (interactive: prompts for initial capital in KRW)
+# The backtester's own main() still exists and prompts for capital interactively
 python upbit_backtest_strategy.py
 ```
 
@@ -49,16 +49,14 @@ Environment variables:
 
 ## Known problems (verified, not yet fixed)
 
-- `upbit_main.py --mode backtest` is accepted by argparse but exits with "unsupported mode". The main file only wires the monitor and never imports the backtest module. The docstring also mentions `monitor` and `both` modes that do not exist.
-- `setup_korean_font()` in the backtester calls `fm._rebuild()`, which matplotlib removed in 3.6. On the pinned 3.10.5 this raises, the outer `except` overwrites the already-set Korean font with DejaVu Sans, and chart labels render as boxes.
-- `ruff check` currently reports 26 findings (f-strings without placeholders, unused variables, two bare `except`). They are deliberately left for the cleanup pass; do not widen the lint rule set until they are gone.
+- `ruff check` currently reports 25 findings (f-strings without placeholders, unused variables, two bare `except`). They are deliberately left for the cleanup pass; do not widen the lint rule set until they are gone.
 
 ## Architecture
 
 Four flat modules, no package:
 
 - `strategy.py` is the single definition of the strategy: `StrategyParams` (frozen dataclass), the `STRATEGY_PRESETS` dict (conservative / balanced / aggressive), and `compute_indicators(df, params)`. Change the formula or thresholds here and nowhere else.
-- `upbit_main.py` configures root logging (DEBUG, file + stdout), sets the macOS Korean font for matplotlib, builds `UpbitRealTimeVolatilityMonitor`, and calls `start_monitoring(scan_interval=300)`.
+- `upbit_main.py` is the argparse entry point: `parse_args` (accepts `monitor-default` as an alias for `monitor`), `run_monitor`, `run_backtest`. Logging is configured only in monitor mode by `setup_logging`, at INFO with `httpx`/`httpcore` raised to WARNING because Telegram polling makes one request per second. The backtester is imported lazily inside `run_backtest` so the monitor process never loads matplotlib. Importing the module has no side effects; `tests/test_main.py` depends on that.
 - `upbit_realtime_monitor.py` holds the monitor class and all Telegram handling.
 - `upbit_backtest_strategy.py` holds `UpbitVolatilityBollingerBacktest` and is fully self-contained (own font setup, own output dirs, own coin list). Importing it runs `setup_korean_font()` as a side effect.
 
@@ -95,7 +93,7 @@ The monitor keeps two parallel structures in `__init__`: `self.watchlist` (list 
 
 ### Output files
 
-Everything lands under `upbit_output_files/` (gitignored): `logs/` (monitor, created manually), `results/` CSV, `charts/` PNG at 300 dpi, `reports/` TXT. Only the backtester creates its own subdirectories; tests stub that out so they never write to the repo.
+Everything lands under `upbit_output_files/` (gitignored, anchored to the file's directory, not the CWD): `logs/` (created by `setup_logging` on monitor start), `results/` CSV, `charts/` PNG at 300 dpi, `reports/` TXT. The backtester creates its own subdirectories; tests stub that out so they never write to the repo.
 
 ## Conventions
 
