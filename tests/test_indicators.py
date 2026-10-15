@@ -3,8 +3,12 @@
 모니터와 백테스터에 중복된 공식을 하나로 합치기 전의 안전망이다.
 """
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
+
+from strategy import StrategyParams, compute_indicators
 
 INDICATOR_COLUMNS = [
     "SMA",
@@ -77,13 +81,21 @@ def test_buy_signal_needs_overbought_rsi_inside_squeeze(monitor, breakout_df):
     assert not squeezed_not_overbought["Buy_Signal"].any()
 
 
-def test_sell_thresholds_match_conservative_mode(monitor, breakout_df, make_ohlcv):
-    out = monitor.calculate_indicators(breakout_df).dropna(subset=["BB_Position"])
+def test_default_params_have_no_indicator_based_half_exit(monitor, breakout_df):
+    # 기본 전략의 50% 익절은 진입가 기준(take_profit_hit)이라 지표 컬럼에는 나타나지 않는다.
+    assert not monitor.calculate_indicators(breakout_df)["Sell_50_Signal"].any()
+
+
+def test_legacy_band_rule_when_take_profit_is_unset(breakout_df):
+    legacy = replace(StrategyParams(), take_profit_pct=None, reduce_on_midband=True)
+    out = compute_indicators(breakout_df, legacy).dropna(subset=["BB_Position"])
     pos = out["BB_Position"]
     expected_50 = (pos >= 0.8) | ((pos - 0.5).abs() <= 0.1)
     pd.testing.assert_series_equal(out["Sell_50_Signal"], expected_50, check_names=False)
     assert out["Sell_50_Signal"].any() and not out["Sell_50_Signal"].all()
 
+
+def test_sell_all_threshold(monitor, make_ohlcv):
     # 급락 구간: 종가가 20일 창의 최솟값이라 하단 밴드 근처(위치 <= 0.1)에 머문다.
     crash = make_ohlcv(
         np.concatenate([100 + 3 * np.sin(np.arange(60) * 0.5), 100 - np.arange(1, 21) * 2.0])

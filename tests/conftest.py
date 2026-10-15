@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from positions import PositionBook
 from upbit_backtest_strategy import UpbitVolatilityBollingerBacktest
 from upbit_realtime_monitor import UpbitRealTimeVolatilityMonitor
 
@@ -46,8 +47,8 @@ def breakout_df() -> pd.DataFrame:
 
 @pytest.fixture
 def monitor() -> UpbitRealTimeVolatilityMonitor:
-    # 토큰 없이 생성하면 Telegram Application이 만들어지지 않는다.
-    return UpbitRealTimeVolatilityMonitor()
+    # 토큰 없이 생성하면 Telegram Application이 만들어지지 않는다. 포지션 장부는 메모리에만 둔다.
+    return UpbitRealTimeVolatilityMonitor(positions=PositionBook(None))
 
 
 @pytest.fixture

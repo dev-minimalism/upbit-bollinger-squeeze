@@ -18,8 +18,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from positions import PositionBook
 from strategy import STRATEGY_PRESETS, StrategyParams
-from upbit_realtime_monitor import UpbitRealTimeVolatilityMonitor
+from upbit_realtime_monitor import DEFAULT_POSITIONS_PATH, UpbitRealTimeVolatilityMonitor
 
 BASE_DIR = Path(__file__).resolve().parent
 LOG_DIR = BASE_DIR / "upbit_output_files" / "logs"
@@ -94,6 +95,7 @@ def run_monitor(params: StrategyParams) -> int:
         telegram_bot_token=telegram_bot_token,
         telegram_chat_id=telegram_chat_id,
         params=params,
+        positions=PositionBook(DEFAULT_POSITIONS_PATH),
     )
 
     print(f"""🎯 백그라운드 모니터링 설정:
@@ -102,8 +104,9 @@ def run_monitor(params: StrategyParams) -> int:
    📱 텔레그램 알림: {"활성화" if telegram_bot_token else "비활성화"}
    🟢 24시간 거래 모니터링
    📝 로그 파일: {log_file.relative_to(BASE_DIR)}
+   📌 포지션 파일: {DEFAULT_POSITIONS_PATH.relative_to(BASE_DIR)} (열린 포지션 {len(monitor.positions)}개)
    🔄 오류 발생시 자동 재시도
-   🤖 텔레그램 명령어: /ticker, /status, /start
+   🤖 텔레그램 명령어: /ticker, /status, /positions, /close, /start
    ⏹️ 종료: kill -TERM [PID] 또는 Ctrl+C""")
     print("=" * 80)
     logger.info(
@@ -121,7 +124,7 @@ def run_monitor(params: StrategyParams) -> int:
 
 
 def run_backtest(strategy_mode: str, capital: float, days: int) -> int:
-    # matplotlib 임포트와 폰트 설정이 딸려 오므로 모니터 모드에서는 불러오지 않는다.
+    # matplotlib 임포트가 딸려 오므로 모니터 모드에서는 불러오지 않는다.
     from upbit_backtest_strategy import UpbitVolatilityBollingerBacktest
 
     backtest = UpbitVolatilityBollingerBacktest(

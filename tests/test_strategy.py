@@ -1,10 +1,19 @@
 """strategy.py: 파라미터 프리셋과 compute_indicators의 파라미터 연결을 검증한다."""
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from strategy import INDICATOR_COLUMNS, STRATEGY_PRESETS, StrategyParams, compute_indicators
+from positions import PositionBook
+from strategy import (
+    INDICATOR_COLUMNS,
+    STRATEGY_PRESETS,
+    StrategyParams,
+    compute_indicators,
+    take_profit_hit,
+)
 from upbit_realtime_monitor import UpbitRealTimeVolatilityMonitor
 
 
@@ -49,7 +58,12 @@ def test_signals_follow_the_given_thresholds(mode, breakout_df):
     pos, rsi = out["BB_Position"], out["RSI"]
 
     expected_buy = (rsi > p.rsi_overbought) & out["Volatility_Squeeze"]
-    expected_50 = (pos >= p.bb_sell_threshold) | ((pos - 0.5).abs() <= 0.1)
+    if p.take_profit_pct is None:
+        expected_50 = pos >= p.bb_sell_threshold
+    else:
+        expected_50 = pd.Series(False, index=out.index)
+    if p.reduce_on_midband:
+        expected_50 = expected_50 | ((pos - 0.5).abs() <= 0.1)
     expected_all = pos <= p.bb_sell_all_threshold
     pd.testing.assert_series_equal(out["Buy_Signal"], expected_buy, check_names=False)
     pd.testing.assert_series_equal(out["Sell_50_Signal"], expected_50, check_names=False)
@@ -66,8 +80,45 @@ def test_looser_preset_sells_more_often(breakout_df):
 
 
 def test_monitor_uses_injected_params(breakout_df):
-    monitor = UpbitRealTimeVolatilityMonitor(params=STRATEGY_PRESETS["aggressive"])
+    monitor = UpbitRealTimeVolatilityMonitor(
+        params=STRATEGY_PRESETS["aggressive"], positions=PositionBook(None)
+    )
     assert monitor.params is STRATEGY_PRESETS["aggressive"]
     out = monitor.calculate_indicators(breakout_df)
     expected = compute_indicators(breakout_df, STRATEGY_PRESETS["aggressive"])
     pd.testing.assert_frame_equal(out, expected)
+
+
+# ---------------------------------------------------------------------------
+# 진입가 대비 익절 (take_profit_pct)
+# ---------------------------------------------------------------------------
+
+
+def test_presets_use_entry_relative_take_profit_without_midband_reduction():
+    # 3년 백테스트 비교 결과로 정한 기본값: 진입가 대비 +5% 익절, 중앙 되돌림 감축 없음
+    assert all(
+        p.take_profit_pct == 0.05 and not p.reduce_on_midband for p in STRATEGY_PRESETS.values()
+    )
+
+
+def test_entry_relative_target_replaces_the_band_clause(breakout_df):
+    p = replace(STRATEGY_PRESETS["conservative"], take_profit_pct=0.05, reduce_on_midband=True)
+    out = compute_indicators(breakout_df, p).dropna(subset=["BB_Position"])
+    midband_only = (out["BB_Position"] - 0.5).abs() <= 0.1
+    pd.testing.assert_series_equal(out["Sell_50_Signal"], midband_only, check_names=False)
+    # 상승 구간 끝은 밴드 상단(위치 0.9)이지만 더 이상 지표 신호로는 익절하지 않는다.
+    assert not out["Sell_50_Signal"].iloc[-5:].any()
+
+
+def test_midband_reduction_can_be_disabled(breakout_df):
+    p = replace(STRATEGY_PRESETS["conservative"], take_profit_pct=0.05, reduce_on_midband=False)
+    assert not compute_indicators(breakout_df, p)["Sell_50_Signal"].any()
+
+
+def test_take_profit_hit_compares_against_entry():
+    p = replace(StrategyParams(), take_profit_pct=0.10)
+    assert not take_profit_hit(p, entry_price=100, price=109.99)
+    assert take_profit_hit(p, entry_price=100, price=110)
+    assert not take_profit_hit(
+        replace(StrategyParams(), take_profit_pct=None), entry_price=100, price=200
+    )

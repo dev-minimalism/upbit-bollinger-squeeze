@@ -7,6 +7,7 @@
 """
 
 from dataclasses import dataclass
+from typing import Optional
 
 import pandas as pd
 
@@ -41,6 +42,13 @@ class StrategyParams:
     # 매도: 밴드 위치가 bb_sell_threshold 이상이면 50% 익절, bb_sell_all_threshold 이하면 전량 매도
     bb_sell_threshold: float = 0.8
     bb_sell_all_threshold: float = 0.1
+    # 진입가 대비 이 비율만큼 오르면 50% 익절. 설정하면 밴드 위치 기준 익절(bb_sell_threshold)을 대체한다.
+    # 진입가가 필요하므로 지표 컬럼이 아니라 포지션을 아는 쪽(take_profit_hit)에서 판정한다.
+    # None이면 예전 규칙(밴드 위치 기준)으로 돌아간다.
+    take_profit_pct: Optional[float] = 0.05
+    # 밴드 중앙(위치 0.5 ± 0.1)으로 되돌아오면 50% 감축. 3년 백테스트에서 이 조항은 첫 청산을
+    # 손실로 만들었기 때문에 기본은 끈다.
+    reduce_on_midband: bool = False
     # 사람이 읽는 모드 설명 (로그, 리포트용)
     label: str = "🛡️ 보수적 전략: 안전 우선, 신중한 매매"
 
@@ -112,9 +120,23 @@ def compute_indicators(data: pd.DataFrame, params: StrategyParams) -> pd.DataFra
 
     # 매매 신호. 매수는 의도적으로 "과매수 RSI + 변동성 압축" 조합이다 (모멘텀 돌파).
     data["Buy_Signal"] = (data["RSI"] > params.rsi_overbought) & data["Volatility_Squeeze"]
-    data["Sell_50_Signal"] = (data["BB_Position"] >= params.bb_sell_threshold) | (
-        abs(data["BB_Position"] - 0.5) <= 0.1
-    )
+    if params.take_profit_pct is None:
+        sell_half = data["BB_Position"] >= params.bb_sell_threshold
+    else:
+        sell_half = pd.Series(False, index=data.index)
+    if params.reduce_on_midband:
+        sell_half = sell_half | (abs(data["BB_Position"] - 0.5) <= 0.1)
+    data["Sell_50_Signal"] = sell_half
     data["Sell_All_Signal"] = data["BB_Position"] <= params.bb_sell_all_threshold
 
     return data
+
+
+def take_profit_hit(params: StrategyParams, entry_price: float, price: float) -> bool:
+    """진입가 대비 익절 목표(take_profit_pct)에 도달했는가. 목표가 없으면 항상 False."""
+    if params.take_profit_pct is None:
+        return False
+    # 100 * 1.10 == 110.00000000000001 같은 부동소수점 오차로 정확히 목표가인 봉을 놓치지 않도록
+    # 수익률로 비교하고 아주 작은 허용 오차를 둔다.
+    gain = price / entry_price - 1
+    return gain >= params.take_profit_pct - 1e-9

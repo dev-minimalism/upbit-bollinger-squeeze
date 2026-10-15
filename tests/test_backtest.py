@@ -1,5 +1,7 @@
 """백테스트 포지션 상태 머신과 성과 지표의 현재 동작을 고정하는 테스트."""
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -60,6 +62,7 @@ def test_signal_precedence_on_the_same_bar(backtest):
 
 
 def test_open_position_is_liquidated_at_last_close(backtest):
+    backtest.params = replace(backtest.params, take_profit_pct=None)  # 150에서 익절되지 않도록
     df = signals_frame([100, 100, 150], buy=[0])
     result = backtest._execute_backtest(df, "KRW-TEST")
     assert actions(result) == ["BUY"]
@@ -151,3 +154,31 @@ def test_get_crypto_data_rejects_short_history_without_retrying(backtest, monkey
     )
     assert backtest.get_crypto_data("KRW-NEW") is None
     assert len(calls) == 1  # 상장 직후 코인은 재시도해도 캔들이 늘지 않는다
+
+
+# ---------------------------------------------------------------------------
+# 진입가 대비 익절
+# ---------------------------------------------------------------------------
+
+
+def test_take_profit_sells_half_once_price_is_up_by_the_target(backtest):
+    backtest.params = replace(backtest.params, take_profit_pct=0.05, reduce_on_midband=False)
+    df = signals_frame([100, 104, 105, 110], buy=[0])  # 지표 매도 신호는 전혀 없음
+    result = backtest._execute_backtest(df, "KRW-TEST")
+    assert actions(result) == ["BUY", "SELL_50%"]
+    assert result["trades"][1]["price"] == 105  # 104는 +4%라 아직, 105에서 정확히 +5%
+
+
+def test_take_profit_does_not_fire_without_a_target(backtest):
+    backtest.params = replace(backtest.params, take_profit_pct=None)
+    df = signals_frame([100, 110, 120], buy=[0])
+    assert actions(backtest._execute_backtest(df, "KRW-TEST")) == ["BUY"]
+
+
+def test_take_profit_uses_the_latest_entry(backtest):
+    backtest.params = replace(backtest.params, take_profit_pct=0.10, reduce_on_midband=False)
+    # 100에 매수, 50에 전량 매도(손절), 50에 재진입 -> 55에서 +10%
+    df = signals_frame([100, 50, 50, 55], buy=[0, 2], sell_all=[1])
+    result = backtest._execute_backtest(df, "KRW-TEST")
+    assert actions(result) == ["BUY", "SELL_ALL", "BUY", "SELL_50%"]
+    assert result["trades"][-1]["price"] == 55

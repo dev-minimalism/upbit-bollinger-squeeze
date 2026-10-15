@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import pyupbit
 
-from strategy import StrategyParams, compute_indicators
+from strategy import StrategyParams, compute_indicators, take_profit_hit
 
 warnings.filterwarnings("ignore")
 
@@ -106,9 +106,6 @@ def setup_korean_font():
         return False
 
 
-setup_korean_font()
-
-
 # ===================================================================================
 # 메인 백테스트 클래스
 # ===================================================================================
@@ -125,6 +122,9 @@ class UpbitVolatilityBollingerBacktest:
         initial_capital: 초기 자금 (원, 기본값: 100만원)
         strategy_mode: 전략 모드 ("conservative", "balanced", "aggressive")
         """
+
+        # 차트에 한글이 들어가므로 인스턴스를 만들 때 폰트를 준비한다 (임포트 시점 부작용 없음).
+        setup_korean_font()
 
         # 업비트 주요 코인 리스트 (원화 마켓)
         self.crypto_list = [
@@ -248,6 +248,7 @@ class UpbitVolatilityBollingerBacktest:
     def _execute_backtest(self, data: pd.DataFrame, symbol: str) -> Dict:
         """백테스트 로직 실행"""
         position = 0  # 0: 노포지션, 1: 50%, 2: 100%
+        entry_price = None
         cash = self.initial_capital
         coins = 0
         trades = []
@@ -261,6 +262,7 @@ class UpbitVolatilityBollingerBacktest:
             if data.iloc[i]["Buy_Signal"] and position == 0:
                 coins = cash / current_price
                 position = 2
+                entry_price = current_price
 
                 trades.append(
                     {
@@ -273,8 +275,11 @@ class UpbitVolatilityBollingerBacktest:
                 )
                 cash = 0  # 전액 투자
 
-            # 50% 익절
-            elif data.iloc[i]["Sell_50_Signal"] and position == 2:
+            # 50% 익절: 지표 신호(밴드 위치/중앙 되돌림) 또는 진입가 대비 목표 도달
+            elif position == 2 and (
+                data.iloc[i]["Sell_50_Signal"]
+                or take_profit_hit(self.params, entry_price, current_price)
+            ):
                 sell_coins = coins * 0.5
                 sell_value = sell_coins * current_price
                 cash += sell_value
@@ -982,45 +987,3 @@ class UpbitVolatilityBollingerBacktest:
 # ===================================================================================
 # 메인 실행 함수
 # ===================================================================================
-
-
-def main():
-    """메인 실행 함수"""
-    print("🚀 업비트 코인 변동성 폭파 볼린저 밴드 백테스트")
-    print("=" * 50)
-
-    # 초기 자금 설정
-    print("💰 초기 자금 설정:")
-    try:
-        capital = float(input("초기 자금을 입력하세요 (원): "))
-        backtest = UpbitVolatilityBollingerBacktest(initial_capital=capital)
-    except ValueError:
-        print("잘못된 입력입니다. 기본값 1,000,000원을 사용합니다.")
-        backtest = UpbitVolatilityBollingerBacktest(initial_capital=1000000)
-
-    # 백테스트 기간 설정
-    days = 1095  # 3년
-    print(f"📅 분석 기간: 최근 {days}일 (약 3년)")
-
-    # 종합 분석 실행
-    results = backtest.run_comprehensive_analysis(
-        days=days, max_cryptos=15, detailed_analysis="top3", save_charts=True
-    )
-
-    if results:
-        print("\n✅ 분석 완료!")
-
-        # 투자 권장사항
-        summary_results = results.get("summary_results")
-        if not summary_results.empty:
-            top_performers = summary_results.head(3)
-            print("\n🏆 투자 추천 코인 (상위 3개):")
-            for i, (_, row) in enumerate(top_performers.iterrows()):
-                print(f"{i + 1}. {row['Symbol']}: {row['Total_Return(%)']}% 수익률")
-
-    else:
-        print("\n❌ 분석 실패")
-
-
-if __name__ == "__main__":
-    main()
