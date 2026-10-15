@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 import pyupbit
 
+from strategy import StrategyParams, compute_indicators
+
 warnings.filterwarnings("ignore")
 
 
@@ -163,7 +165,8 @@ class UpbitVolatilityBollingerBacktest:
 
         self.initial_capital = initial_capital
         self.strategy_mode = strategy_mode
-        self._setup_parameters(strategy_mode)
+        self.params = StrategyParams.from_mode(strategy_mode)
+        print(self.params.label)
         self._setup_output_directories()
 
         print(f"💰 초기 자금: {self.initial_capital:,.0f}원")
@@ -197,69 +200,9 @@ class UpbitVolatilityBollingerBacktest:
                 elif directory == self.reports_dir:
                     self.reports_dir = base_dir
 
-    def _setup_parameters(self, strategy_mode: str):
-        """전략 매개변수 설정"""
-        self.bb_period = 20
-        self.bb_std_multiplier = 2.0
-        self.rsi_period = 14
-        self.volatility_lookback = 50
-        self.volatility_threshold = 0.2
-
-        if strategy_mode == "aggressive":
-            self.rsi_overbought = 60
-            self.bb_sell_threshold = 0.7
-            self.bb_sell_all_threshold = 0.2
-            print("🔥 공격적 전략: 더 많은 매매 기회, 높은 수익 추구")
-        elif strategy_mode == "balanced":
-            self.rsi_overbought = 65
-            self.bb_sell_threshold = 0.75
-            self.bb_sell_all_threshold = 0.15
-            print("⚖️ 균형 전략: 적당한 위험과 수익")
-        else:  # conservative
-            self.rsi_overbought = 70
-            self.bb_sell_threshold = 0.8
-            self.bb_sell_all_threshold = 0.1
-            print("🛡️ 보수적 전략: 안전 우선, 신중한 매매")
-
     def calculate_technical_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """기술적 지표 계산"""
-        if len(data) < max(self.bb_period, self.rsi_period, self.volatility_lookback):
-            return data
-
-        # 볼린저 밴드
-        data["SMA"] = data["close"].rolling(window=self.bb_period).mean()
-        data["STD"] = data["close"].rolling(window=self.bb_period).std()
-        data["Upper_Band"] = data["SMA"] + (data["STD"] * self.bb_std_multiplier)
-        data["Lower_Band"] = data["SMA"] - (data["STD"] * self.bb_std_multiplier)
-
-        # 밴드폭 (변동성 지표)
-        data["Band_Width"] = (data["Upper_Band"] - data["Lower_Band"]) / data["SMA"]
-
-        # 변동성 압축 신호
-        data["Volatility_Squeeze"] = data["Band_Width"] < data["Band_Width"].rolling(
-            self.volatility_lookback
-        ).quantile(self.volatility_threshold)
-
-        # 볼린저 밴드 위치 (0~1)
-        data["BB_Position"] = (data["close"] - data["Lower_Band"]) / (
-            data["Upper_Band"] - data["Lower_Band"]
-        )
-
-        # RSI
-        delta = data["close"].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=self.rsi_period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=self.rsi_period).mean()
-        rs = gain / loss
-        data["RSI"] = 100 - (100 / (1 + rs))
-
-        # 매매 신호 생성
-        data["Buy_Signal"] = (data["RSI"] > self.rsi_overbought) & (data["Volatility_Squeeze"])
-        data["Sell_50_Signal"] = (data["BB_Position"] >= self.bb_sell_threshold) | (
-            abs(data["BB_Position"] - 0.5) <= 0.1
-        )
-        data["Sell_All_Signal"] = data["BB_Position"] <= self.bb_sell_all_threshold
-
-        return data
+        """기술적 지표 계산 (strategy.compute_indicators에 위임)"""
+        return compute_indicators(data, self.params)
 
     def get_crypto_data(self, symbol: str, days: int = 1100) -> Optional[pd.DataFrame]:
         """업비트에서 코인 데이터 가져오기 (강화된 오류 처리)"""
@@ -348,7 +291,7 @@ class UpbitVolatilityBollingerBacktest:
 
                     # 5. NaN 값 처리
                     data = data.dropna()
-                    if len(data) < self.volatility_lookback:
+                    if len(data) < self.params.min_rows:
                         if attempt == max_retries - 1:
                             return None
                         continue
@@ -1111,9 +1054,9 @@ class UpbitVolatilityBollingerBacktest:
    • 코인은 주식보다 변동성이 매우 높습니다
 
 📊 사용된 전략 파라미터:
-   • 볼린저 밴드: {self.bb_period}일, {self.bb_std_multiplier}σ
-   • RSI 임계값: {self.rsi_overbought}
-   • 변동성 압축: 하위 {self.volatility_threshold * 100}%
+   • 볼린저 밴드: {self.params.bb_period}일, {self.params.bb_std_multiplier}σ
+   • RSI 임계값: {self.params.rsi_overbought}
+   • 변동성 압축: 하위 {self.params.volatility_threshold * 100}%
 
 {"=" * 60}
 리포트 생성 시간: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}

@@ -85,12 +85,12 @@ def test_max_drawdown_is_peak_to_trough_percent(backtest):
 def test_strategy_mode_thresholds(
     make_backtest, mode, rsi_overbought, sell_threshold, sell_all_threshold
 ):
-    bt = make_backtest(mode)
-    assert (bt.rsi_overbought, bt.bb_sell_threshold, bt.bb_sell_all_threshold) == (
+    p = make_backtest(mode).params
+    assert (p.rsi_overbought, p.bb_sell_threshold, p.bb_sell_all_threshold) == (
         rsi_overbought,
         sell_threshold,
         sell_all_threshold,
     )
     # 공통 파라미터는 모드와 무관하다.
-    assert (bt.bb_period, bt.bb_std_multiplier, bt.rsi_period) == (20, 2.0, 14)
-    assert (bt.volatility_lookback, bt.volatility_threshold) == (50, 0.2)
+    assert (p.bb_period, p.bb_std_multiplier, p.rsi_period) == (20, 2.0, 14)
+    assert (p.volatility_lookback, p.volatility_threshold) == (50, 0.2)

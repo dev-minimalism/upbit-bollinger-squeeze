@@ -22,17 +22,25 @@ import pyupbit
 import requests
 from telegram.ext import Application, CommandHandler
 
+from strategy import StrategyParams, compute_indicators
+
 warnings.filterwarnings("ignore")
 
 
 class UpbitRealTimeVolatilityMonitor:
-    def __init__(self, telegram_bot_token: str = None, telegram_chat_id: str = None):
+    def __init__(
+        self,
+        telegram_bot_token: str = None,
+        telegram_chat_id: str = None,
+        params: Optional[StrategyParams] = None,
+    ):
         """
         업비트 실시간 변동성 폭파 볼린저 밴드 모니터링 시스템
 
         Parameters:
         telegram_bot_token: 텔레그램 봇 토큰
         telegram_chat_id: 텔레그램 채팅 ID
+        params: 전략 파라미터 (기본값: conservative 프리셋)
         """
         # 로깅 설정 (use logger configured in main.py)
         self.logger = logging.getLogger(__name__)
@@ -213,13 +221,8 @@ class UpbitRealTimeVolatilityMonitor:
                 self.logger.error(f"❌ Telegram bot initialization failed: {e}")
                 self.telegram_app = None
 
-        # 기술적 지표 설정
-        self.bb_period = 20
-        self.bb_std_multiplier = 2.0
-        self.rsi_period = 14
-        self.rsi_overbought = 70
-        self.volatility_lookback = 50
-        self.volatility_threshold = 0.2
+        # 전략 파라미터. 공식 자체는 strategy.py에 있다.
+        self.params = params or StrategyParams.from_mode("conservative")
 
         # 알림 설정
         self.last_alerts = {}  # 중복 알림 방지
@@ -511,35 +514,8 @@ class UpbitRealTimeVolatilityMonitor:
                 time.sleep(60)
 
     def calculate_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """기술적 지표 계산"""
-        if len(data) < max(self.bb_period, self.rsi_period, self.volatility_lookback):
-            return data
-
-        if "close" not in data.columns:
-            data.columns = ["open", "high", "low", "close", "volume"]
-
-        data["SMA"] = data["close"].rolling(window=self.bb_period).mean()
-        data["STD"] = data["close"].rolling(window=self.bb_period).std()
-        data["Upper_Band"] = data["SMA"] + (data["STD"] * self.bb_std_multiplier)
-        data["Lower_Band"] = data["SMA"] - (data["STD"] * self.bb_std_multiplier)
-        data["Band_Width"] = (data["Upper_Band"] - data["Lower_Band"]) / data["SMA"]
-        data["Volatility_Squeeze"] = data["Band_Width"] < data["Band_Width"].rolling(
-            self.volatility_lookback
-        ).quantile(self.volatility_threshold)
-        data["BB_Position"] = (data["close"] - data["Lower_Band"]) / (
-            data["Upper_Band"] - data["Lower_Band"]
-        )
-        delta = data["close"].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=self.rsi_period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=self.rsi_period).mean()
-        rs = gain / loss
-        data["RSI"] = 100 - (100 / (1 + rs))
-        data["Buy_Signal"] = (data["RSI"] > self.rsi_overbought) & (data["Volatility_Squeeze"])
-        data["Sell_50_Signal"] = (data["BB_Position"] >= 0.8) | (
-            abs(data["BB_Position"] - 0.5) <= 0.1
-        )
-        data["Sell_All_Signal"] = data["BB_Position"] <= 0.1
-        return data
+        """기술적 지표 계산 (strategy.compute_indicators에 위임)"""
+        return compute_indicators(data, self.params)
 
     def get_crypto_data(self, symbol: str, count: int = 100) -> Optional[pd.DataFrame]:
         """업비트에서 코인 데이터 가져오기"""
@@ -548,7 +524,7 @@ class UpbitRealTimeVolatilityMonitor:
             if data is None or data.empty:
                 self.logger.warning(f"No data found for {symbol}")
                 return None
-            if len(data) < self.volatility_lookback:
+            if len(data) < self.params.min_rows:
                 self.logger.warning(f"Insufficient data for {symbol}")
                 return None
             return data
@@ -560,7 +536,7 @@ class UpbitRealTimeVolatilityMonitor:
         """신호 확인"""
         try:
             data = self.get_crypto_data(symbol)
-            if data is None or len(data) < self.volatility_lookback:
+            if data is None or len(data) < self.params.min_rows:
                 self.logger.warning(f"Insufficient data for {symbol}")
                 return {}
             data = self.calculate_indicators(data)

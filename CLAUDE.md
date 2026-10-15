@@ -55,8 +55,9 @@ Environment variables:
 
 ## Architecture
 
-Three flat modules, no package:
+Four flat modules, no package:
 
+- `strategy.py` is the single definition of the strategy: `StrategyParams` (frozen dataclass), the `STRATEGY_PRESETS` dict (conservative / balanced / aggressive), and `compute_indicators(df, params)`. Change the formula or thresholds here and nowhere else.
 - `upbit_main.py` configures root logging (DEBUG, file + stdout), sets the macOS Korean font for matplotlib, builds `UpbitRealTimeVolatilityMonitor`, and calls `start_monitoring(scan_interval=300)`.
 - `upbit_realtime_monitor.py` holds the monitor class and all Telegram handling.
 - `upbit_backtest_strategy.py` holds `UpbitVolatilityBollingerBacktest` and is fully self-contained (own font setup, own output dirs, own coin list). Importing it runs `setup_korean_font()` as a side effect.
@@ -84,7 +85,7 @@ Indicators are computed on daily OHLCV from `pyupbit.get_ohlcv(interval="day")`.
 - `Sell_50_Signal = BB_Position >= sell_threshold OR |BB_Position - 0.5| <= 0.1` (near upper band, or back at the midband).
 - `Sell_All_Signal = BB_Position <= sell_all_threshold`.
 
-The indicator code is **duplicated** in `calculate_indicators` (monitor) and `calculate_technical_indicators` (backtest). Any change to the formula must be applied to both. `tests/test_indicators.py` asserts the two produce identical output; that test is the guardrail for merging them. The monitor hardcodes the "conservative" thresholds (RSI 70, sell 0.8, sell-all 0.1); the backtester exposes `strategy_mode` = conservative / balanced / aggressive via `_setup_parameters`.
+The formula lives only in `compute_indicators` in `strategy.py`; it returns a new frame and never mutates its input. `calculate_indicators` (monitor) and `calculate_technical_indicators` (backtest) are one-line wrappers that pass `self.params`. The monitor takes an optional `params` constructor argument and defaults to the conservative preset; the backtester resolves `strategy_mode` through `StrategyParams.from_mode`, which raises `ValueError` on an unknown mode. `tests/test_indicators.py` still asserts the two wrappers agree, and `tests/test_strategy.py` checks that each preset's thresholds reach the signal columns.
 
 Backtest position state machine in `_execute_backtest`: `0` flat, `2` full, `1` half. Buy only from 0 and goes all-in to 2. Sell_50 only from 2, moves to 1. Sell_All from any position > 0, back to 0. Open positions are liquidated at the last close. `_analyze_trades` pairs each SELL with the most recent BUY, so one buy can produce two completed-trade rows (a 50% exit and a full exit). `tests/test_backtest.py` pins this behaviour.
 
@@ -102,4 +103,4 @@ Everything lands under `upbit_output_files/` (gitignored): `logs/` (monitor, cre
 - Comments, docstrings, log messages, and user-facing strings are in Korean with heavy emoji. Keep new output in the same style.
 - Telegram messages use HTML parse mode; escape `<` and `>` as `&lt;` / `&gt;` in message text.
 - Every method swallows exceptions and logs them rather than raising. The monitor is designed to never crash.
-- Tests build small synthetic OHLCV DataFrames and never touch the network. Construct the monitor with no token and stub `_setup_output_directories` on the backtester (see `tests/conftest.py`).
+- Tests build small synthetic OHLCV DataFrames and never touch the network. The shared `breakout_df` fixture (100 days of high-volatility oscillation, then a 30-day gentle ramp) is the one series where both buy conditions hold; reuse it before inventing another. Construct the monitor with no token and stub `_setup_output_directories` on the backtester (see `tests/conftest.py`).
