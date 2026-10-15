@@ -53,8 +53,6 @@ def monitor() -> UpbitRealTimeVolatilityMonitor:
 @pytest.fixture
 def make_backtest(monkeypatch):
     """출력 디렉토리 생성을 막은 백테스터 팩토리. 레포에 파일을 남기지 않는다."""
-    monkeypatch.delenv("UPBIT_ACCESS_KEY", raising=False)
-    monkeypatch.delenv("UPBIT_SECRET_KEY", raising=False)
     monkeypatch.setattr(
         UpbitVolatilityBollingerBacktest, "_setup_output_directories", lambda self: None
     )

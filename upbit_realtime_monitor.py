@@ -26,6 +26,87 @@ from strategy import StrategyParams, compute_indicators
 
 warnings.filterwarnings("ignore")
 
+# 모니터링 대상 코인 (업비트 원화 마켓)과 알림 메시지에 쓰는 한글 이름.
+# 코인을 추가하거나 뺄 때는 이 dict만 고친다. 스캔 순서는 dict 순서를 따른다.
+WATCHLIST: dict[str, str] = {
+    # 메이저 코인
+    "KRW-BTC": "비트코인",
+    "KRW-ETH": "이더리움",
+    "KRW-XRP": "리플",
+    "KRW-ADA": "에이다",
+    "KRW-DOT": "폴카닷",
+    # 대형 알트코인
+    "KRW-LINK": "체인링크",
+    "KRW-ENS": "이더리움네임서비스",
+    "KRW-SOL": "솔라나",
+    "KRW-CTC": "크레딧코인",
+    "KRW-TRX": "트론",
+    # 중형 알트코인
+    "KRW-AVAX": "아발란체",
+    "KRW-SHIB": "시바이누",
+    "KRW-SNT": "스테이터스네트워크토큰",
+    "KRW-BTT": "비트토렌트",
+    "KRW-XLM": "스텔라루멘",
+    # 소형 알트코인
+    "KRW-DOGE": "도지코인",
+    "KRW-THETA": "세타토큰",
+    "KRW-HBAR": "헤데라",
+    "KRW-OMNI": "옴니네트워크",
+    "KRW-ALGO": "알고랜드",
+    # 한국 인기 코인
+    "KRW-T": "쓰레스홀드",
+    "KRW-ONDO": "온도",
+    "KRW-TT": "썬더코어",
+    "KRW-CVC": "시빅",
+    "KRW-TOKAMAK": "토카막네트워크",
+    # DeFi & 신규 코인
+    "KRW-IOTA": "아이오타",
+    "KRW-AQT": "알파쿼크",
+    "KRW-SUI": "수이",
+    "KRW-IQ": "아이큐",
+    "KRW-XEC": "이캐시",
+    "KRW-MTL": "메탈",
+    "KRW-PUNDIX": "펀디엑스",
+    "KRW-PYTH": "피스네트워크",
+    "KRW-KAVA": "카바",
+    "KRW-A": "아놀드",
+    "KRW-BAT": "베이직어텐션토큰",
+    "KRW-ARB": "아비트럼",
+    "KRW-WAXP": "왁스",
+    "KRW-SAND": "샌드박스",
+    "KRW-XTZ": "테조스",
+    "KRW-BORA": "보라",
+    "KRW-AERGO": "아르고",
+    "KRW-NEO": "네오",
+    "KRW-EGLD": "멀티버스엑스",
+    "KRW-ATOM": "코스모스",
+    "KRW-BIGTIME": "빅타임",
+    "KRW-ZIL": "질리카",
+    "KRW-VET": "비체인",
+    "KRW-ELF": "엘프",
+    "KRW-DRIFT": "드리프트",
+    "KRW-MASK": "마스크네트워크",
+    "KRW-NEAR": "니어프로토콜",
+    "KRW-G": "그래비티",
+    "KRW-SXP": "스와이프",
+    "KRW-BEAM": "빔",
+    "KRW-POLYX": "폴리매쉬",
+    "KRW-ATH": "아토스",
+    "KRW-HIVE": "하이브",
+    "KRW-QTUM": "퀀텀",
+    "KRW-TFUEL": "세타퓨엘",
+    "KRW-VANA": "바나",
+    "KRW-AGLD": "어드벤처골드",
+    "KRW-IOST": "아이오에스티",
+    "KRW-MLK": "밀크",
+    "KRW-STG": "스타게이트",
+    "KRW-SC": "시아코인",
+    "KRW-APT": "앱토스",
+    "KRW-SAFE": "세이프",
+    "KRW-BLAST": "블라스트",
+    "KRW-ME": "미미르",
+}
+
 
 class UpbitRealTimeVolatilityMonitor:
     def __init__(
@@ -45,165 +126,8 @@ class UpbitRealTimeVolatilityMonitor:
         # 로깅 설정 (use logger configured in main.py)
         self.logger = logging.getLogger(__name__)
 
-        # Ticker to Korean name mapping
-        self.ticker_to_korean = {
-            # 메이저 코인
-            "KRW-BTC": "비트코인",
-            "KRW-ETH": "이더리움",
-            "KRW-XRP": "리플",
-            "KRW-ADA": "에이다",
-            "KRW-DOT": "폴카닷",
-            # 대형 알트코인
-            "KRW-LINK": "체인링크",
-            "KRW-ENS": "이더리움네임서비스",
-            "KRW-SOL": "솔라나",
-            "KRW-CTC": "크레딧코인",
-            "KRW-TRX": "트론",
-            # 중형 알트코인
-            "KRW-AVAX": "아발란체",
-            "KRW-SHIB": "시바이누",
-            "KRW-SNT": "스테이터스네트워크토큰",
-            "KRW-BTT": "비트토렌트",
-            "KRW-XLM": "스텔라루멘",
-            # 소형 알트코인
-            "KRW-DOGE": "도지코인",
-            "KRW-THETA": "세타토큰",
-            "KRW-HBAR": "헤데라",
-            "KRW-OMNI": "옴니네트워크",
-            "KRW-ALGO": "알고랜드",
-            # 한국 인기 코인
-            "KRW-T": "쓰레스홀드",
-            "KRW-ONDO": "온도",
-            "KRW-TT": "썬더코어",
-            "KRW-CVC": "시빅",
-            "KRW-TOKAMAK": "토카막네트워크",
-            # DeFi & 신규 코인
-            "KRW-IOTA": "아이오타",
-            "KRW-AQT": "알파쿼크",
-            "KRW-SUI": "수이",
-            "KRW-IQ": "아이큐",
-            "KRW-XEC": "이캐시",
-            "KRW-MTL": "메탈",
-            "KRW-PUNDIX": "펀디엑스",
-            "KRW-PYTH": "피스네트워크",
-            "KRW-KAVA": "카바",
-            "KRW-A": "아놀드",
-            "KRW-BAT": "베이직어텐션토큰",
-            "KRW-ARB": "아비트럼",
-            "KRW-WAXP": "왁스",
-            "KRW-SAND": "샌드박스",
-            "KRW-XTZ": "테조스",
-            "KRW-BORA": "보라",
-            "KRW-AERGO": "아르고",
-            "KRW-NEO": "네오",
-            "KRW-EGLD": "멀티버스엑스",
-            "KRW-ATOM": "코스모스",
-            "KRW-BIGTIME": "빅타임",
-            "KRW-ZIL": "질리카",
-            "KRW-VET": "비체인",
-            "KRW-ELF": "엘프",
-            "KRW-DRIFT": "드리프트",
-            "KRW-MASK": "마스크네트워크",
-            "KRW-NEAR": "니어프로토콜",
-            "KRW-G": "그래비티",
-            "KRW-SXP": "스와이프",
-            "KRW-BEAM": "빔",
-            "KRW-POLYX": "폴리매쉬",
-            "KRW-ATH": "아토스",
-            "KRW-HIVE": "하이브",
-            "KRW-QTUM": "퀀텀",
-            "KRW-TFUEL": "세타퓨엘",
-            "KRW-VANA": "바나",
-            "KRW-AGLD": "어드벤처골드",
-            "KRW-IOST": "아이오에스티",
-            "KRW-MLK": "밀크",
-            "KRW-STG": "스타게이트",
-            "KRW-SC": "시아코인",
-            "KRW-APT": "앱토스",
-            "KRW-SAFE": "세이프",
-            "KRW-BLAST": "블라스트",
-            "KRW-ME": "미미르",
-        }
-
-        # 모니터링 대상 코인 (업비트 원화 마켓)
-        self.watchlist = [
-            # 메이저 코인
-            "KRW-BTC",
-            "KRW-ETH",
-            "KRW-XRP",
-            "KRW-ADA",
-            "KRW-DOT",
-            # 대형 알트코인
-            "KRW-LINK",
-            "KRW-ENS",
-            "KRW-SOL",
-            "KRW-CTC",
-            "KRW-TRX",
-            # 중형 알트코인
-            "KRW-AVAX",
-            "KRW-SHIB",
-            "KRW-SNT",
-            "KRW-BTT",
-            "KRW-XLM",
-            # 소형 알트코인
-            "KRW-DOGE",
-            "KRW-THETA",
-            "KRW-HBAR",
-            "KRW-OMNI",
-            "KRW-ALGO",
-            # 한국 인기 코인
-            "KRW-T",
-            "KRW-ONDO",
-            "KRW-TT",
-            "KRW-CVC",
-            "KRW-TOKAMAK",
-            # DeFi & 신규 코인
-            "KRW-IOTA",
-            "KRW-AQT",
-            "KRW-SUI",
-            "KRW-IQ",
-            "KRW-XEC",
-            "KRW-MTL",
-            "KRW-PUNDIX",
-            "KRW-PYTH",
-            "KRW-KAVA",
-            "KRW-A",
-            "KRW-BAT",
-            "KRW-ARB",
-            "KRW-WAXP",
-            "KRW-SAND",
-            "KRW-XTZ",
-            "KRW-BORA",
-            "KRW-AERGO",
-            "KRW-NEO",
-            "KRW-EGLD",
-            "KRW-ATOM",
-            "KRW-BIGTIME",
-            "KRW-ZIL",
-            "KRW-VET",
-            "KRW-ELF",
-            "KRW-DRIFT",
-            "KRW-MASK",
-            "KRW-NEAR",
-            "KRW-G",
-            "KRW-SXP",
-            "KRW-BEAM",
-            "KRW-POLYX",
-            "KRW-ATH",
-            "KRW-HIVE",
-            "KRW-QTUM",
-            "KRW-TFUEL",
-            "KRW-VANA",
-            "KRW-AGLD",
-            "KRW-IOST",
-            "KRW-MLK",
-            "KRW-STG",
-            "KRW-SC",
-            "KRW-APT",
-            "KRW-SAFE",
-            "KRW-BLAST",
-            "KRW-ME",
-        ]
+        # 감시 코인. 인스턴스별 복사본이라 add/remove가 모듈의 WATCHLIST를 건드리지 않는다.
+        self.watchlist = list(WATCHLIST)
 
         # 텔레그램 설정
         self.telegram_bot_token = telegram_bot_token
@@ -310,8 +234,8 @@ class UpbitRealTimeVolatilityMonitor:
                     "💡 다시 시도하거나 코인 심볼을 확인해주세요.",
                     parse_mode="HTML",
                 )
-            except:
-                pass
+            except Exception as reply_error:
+                self.logger.error(f"❌ 오류 안내 메시지 전송도 실패: {reply_error}")
 
     async def status_command(self, update, context):
         """Handle /status command to show monitoring status."""
@@ -565,21 +489,20 @@ class UpbitRealTimeVolatilityMonitor:
             return {}
 
     def should_send_alert(self, symbol: str, signal_type: str) -> bool:
-        """알림 쿨다운 확인"""
-        key = f"{symbol}_{signal_type}"
-        current_time = time.time()
-        if key in self.last_alerts:
-            if current_time - self.last_alerts[key] < self.alert_cooldown:
-                return False
-        self.last_alerts[key] = current_time
-        return True
+        """같은 코인·신호 종류의 알림이 쿨다운 안에 있으면 False.
+
+        여기서는 기록하지 않는다. 전송에 성공한 뒤 _mark_alert_sent가 기록한다.
+        """
+        last = self.last_alerts.get(f"{symbol}_{signal_type}")
+        return last is None or time.time() - last >= self.alert_cooldown
+
+    def _mark_alert_sent(self, symbol: str, signal_type: str) -> None:
+        self.last_alerts[f"{symbol}_{signal_type}"] = time.time()
 
     def format_alert_message(self, signals: Dict, signal_type: str) -> str:
         """알림 메시지 포맷팅"""
         symbol = signals["symbol"]
-        korean_name = self.ticker_to_korean.get(
-            symbol, symbol
-        )  # Get Korean name, fallback to symbol if not found
+        korean_name = WATCHLIST.get(symbol, symbol)  # 목록에 없는 코인은 티커 그대로
         price = signals["price"]
         rsi = signals["rsi"]
         bb_pos = signals["bb_position"]
@@ -619,29 +542,24 @@ BB 위치: <b>{bb_pos:.2f}</b>
         return message
 
     def process_signals(self, signals: Dict) -> bool:
-        """신호 처리 및 알림"""
+        """신호 처리 및 알림.
+
+        전송에 성공한 알림만 쿨다운에 기록하므로, 텔레그램 전송이 실패한 알림은
+        다음 스캔에서 다시 시도된다.
+        """
         if not signals:
             return False
         symbol = signals["symbol"]
+        labels = {"buy": "🚀 매수", "sell_50": "💡 50% 매도", "sell_all": "🔴 전량 매도"}
         alert_sent = False
-        if signals["buy_signal"] and self.should_send_alert(symbol, "buy"):
-            message = self.format_alert_message(signals, "buy")
-            if self.send_telegram_alert(message):
-                self.logger.info(f"🚀 매수 신호 알림 전송: {symbol}")
-                self.total_signals_sent += 1
-                self.last_signal_time = datetime.now()
-                alert_sent = True
-        if signals["sell_50_signal"] and self.should_send_alert(symbol, "sell_50"):
-            message = self.format_alert_message(signals, "sell_50")
-            if self.send_telegram_alert(message):
-                self.logger.info(f"💡 50% 매도 신호 알림 전송: {symbol}")
-                self.total_signals_sent += 1
-                self.last_signal_time = datetime.now()
-                alert_sent = True
-        if signals["sell_all_signal"] and self.should_send_alert(symbol, "sell_all"):
-            message = self.format_alert_message(signals, "sell_all")
-            if self.send_telegram_alert(message):
-                self.logger.info(f"🔴 전량 매도 신호 알림 전송: {symbol}")
+        for signal_type, label in labels.items():
+            if not signals.get(f"{signal_type}_signal"):
+                continue
+            if not self.should_send_alert(symbol, signal_type):
+                continue
+            if self.send_telegram_alert(self.format_alert_message(signals, signal_type)):
+                self._mark_alert_sent(symbol, signal_type)
+                self.logger.info(f"{label} 신호 알림 전송: {symbol}")
                 self.total_signals_sent += 1
                 self.last_signal_time = datetime.now()
                 alert_sent = True
@@ -717,7 +635,7 @@ BB 위치: <b>{bb_pos:.2f}</b>
                 self.logger.info(
                     f"📊 스캔 #{self.scan_count} 시작 - {current_time.strftime('%H:%M:%S')}"
                 )
-                self.logger.info(f"   🟢 24시간 거래 중 (코인 마켓)")
+                self.logger.info("   🟢 24시간 거래 중 (코인 마켓)")
                 signals_found = self._scan_all_cryptos_auto()
                 if signals_found > 0:
                     self.logger.info(f"🎯 {signals_found}개 신호 발견 및 알림 전송 완료")
@@ -949,9 +867,9 @@ def main():
         if not overview.empty:
             print(overview.to_string(index=False))
         current_time = datetime.now()
-        print(f"\n시장 시간 정보:")
+        print("\n시장 시간 정보:")
         print(f"🇰🇷 한국 시간: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"📊 거래 상태: 🟢 24시간 거래 중")
+        print("📊 거래 상태: 🟢 24시간 거래 중")
         print("\n실시간 모니터링 시작...")
         monitor.start_monitoring(
             scan_interval=300

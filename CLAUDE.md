@@ -45,11 +45,8 @@ Environment variables:
 |---|---|
 | `UPBIT_BOLLINGER_TELEGRAM_BOT_TOKEN` | Telegram bot token. Without it the monitor runs but alerts are only logged. |
 | `UPBIT_BOLLINGER_TELEGRAM_CHAT_ID` | Chat that receives alerts. |
-| `UPBIT_ACCESS_KEY` / `UPBIT_SECRET_KEY` | Optional. Only the backtester instantiates `pyupbit.Upbit` with them; the monitor uses the public API regardless. |
 
-## Known problems (verified, not yet fixed)
-
-- `ruff check` currently reports 25 findings (f-strings without placeholders, unused variables, two bare `except`). They are deliberately left for the cleanup pass; do not widen the lint rule set until they are gone.
+Upbit API keys are not read anywhere. `pyupbit.get_ohlcv` is a public endpoint and the project never trades, so there is nothing for a key to do.
 
 ## Architecture
 
@@ -70,11 +67,11 @@ Four flat modules, no package:
 
 **Outbound alerts do not go through the Application.** `send_telegram_alert` does a raw `requests.post` to the Bot API `sendMessage` endpoint with `parse_mode=HTML`. Keep that split in mind: inbound = python-telegram-bot, outbound = requests.
 
-Alert dedup lives in `should_send_alert`: key is `{symbol}_{signal_type}`, cooldown is 3600s. `total_signals_sent` and `last_signal_time` are only updated when the HTTP send succeeds.
+Alert dedup: `should_send_alert` only checks the `{symbol}_{signal_type}` cooldown (3600s); `_mark_alert_sent` records it, and `process_signals` calls that only after the HTTP send succeeds. A failed Telegram call is therefore retried on the next scan instead of being suppressed for an hour. `process_signals` loops over the three signal types, so one scan can emit a buy and a sell alert for the same coin.
 
 ### Strategy semantics (shared by both halves)
 
-Indicators are computed on daily OHLCV from `pyupbit.get_ohlcv(interval="day")`. The monitor fetches 100 candles; the backtester asks for ~1100 with a retry/fallback ladder.
+Indicators are computed on daily OHLCV from `pyupbit.get_ohlcv(interval="day")`. The monitor fetches 100 candles. The backtester's `get_crypto_data` asks for `days` candles, retries the network call three times, keeps the five OHLCV columns, and returns None without retrying when a coin has fewer than `params.min_rows` candles. `run_multi_crypto_backtest` does not retry on top of that.
 
 - `Band_Width = (Upper - Lower) / SMA` with BB(20, 2.0).
 - `Volatility_Squeeze = Band_Width < rolling(50).quantile(0.2)` of itself. Because it is a relative quantile, roughly 20% of days in any steady regime are flagged; the flag is meaningful only when volatility has just dropped relative to the prior 50 days.
@@ -87,9 +84,9 @@ The formula lives only in `compute_indicators` in `strategy.py`; it returns a ne
 
 Backtest position state machine in `_execute_backtest`: `0` flat, `2` full, `1` half. Buy only from 0 and goes all-in to 2. Sell_50 only from 2, moves to 1. Sell_All from any position > 0, back to 0. Open positions are liquidated at the last close. `_analyze_trades` pairs each SELL with the most recent BUY, so one buy can produce two completed-trade rows (a 50% exit and a full exit). `tests/test_backtest.py` pins this behaviour.
 
-### Coin lists are coupled
+### Coin lists
 
-The monitor keeps two parallel structures in `__init__`: `self.watchlist` (list of `KRW-XXX` tickers that get scanned) and `self.ticker_to_korean` (ticker to Korean display name, used in alert text). Adding or removing a coin means editing both; a missing mapping silently falls back to the raw ticker. The backtester has its own much shorter `self.crypto_list`, independent of the monitor.
+`WATCHLIST` at the top of `upbit_realtime_monitor.py` is the single source for the monitor: keys are the `KRW-XXX` tickers scanned in dict order, values are the Korean names used in alert text. `self.watchlist` is a per-instance list copy, so `add_to_watchlist` / `remove_from_watchlist` never touch the module dict, and a coin added at runtime falls back to its raw ticker in messages. The backtester has its own much shorter `self.crypto_list`, independent of the monitor.
 
 ### Output files
 
@@ -97,7 +94,8 @@ Everything lands under `upbit_output_files/` (gitignored, anchored to the file's
 
 ## Conventions
 
-- Formatting is `ruff format` (4-space indent, double quotes, line length 100). Run it before committing.
+- Formatting is `ruff format` (4-space indent, double quotes, line length 100). `ruff check .` is clean with the E/F/I rule set; keep both passing before committing, and widen the rule set in `pyproject.toml` only together with the fixes.
+- Error handling: catch, report (logger in the monitor, `print` in the backtester, always including the exception text), and continue. Never a bare `except` or a silent `continue`.
 - Comments, docstrings, log messages, and user-facing strings are in Korean with heavy emoji. Keep new output in the same style.
 - Telegram messages use HTML parse mode; escape `<` and `>` as `&lt;` / `&gt;` in message text.
 - Every method swallows exceptions and logs them rather than raising. The monitor is designed to never crash.

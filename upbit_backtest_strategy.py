@@ -72,7 +72,7 @@ def setup_korean_font():
                     font_found = True
                     print(f"✅ 한글 폰트 설정: {font_path}")
                     break
-                except Exception as e:
+                except Exception:
                     continue
 
         if not font_found:
@@ -84,7 +84,7 @@ def setup_korean_font():
                         font_found = True
                         print(f"✅ 한글 폰트 설정: {font_name}")
                         break
-                    except Exception as e:
+                    except Exception:
                         continue
 
         if not font_found:
@@ -125,18 +125,6 @@ class UpbitVolatilityBollingerBacktest:
         initial_capital: 초기 자금 (원, 기본값: 100만원)
         strategy_mode: 전략 모드 ("conservative", "balanced", "aggressive")
         """
-
-        # 업비트 API 키 설정
-        self.access_key = os.getenv("UPBIT_ACCESS_KEY")
-        self.secret_key = os.getenv("UPBIT_SECRET_KEY")
-
-        # API 키가 있으면 인증된 업비트 객체 생성
-        if self.access_key and self.secret_key:
-            self.upbit = pyupbit.Upbit(self.access_key, self.secret_key)
-            print("✅ 업비트 API 키 인증 완료 - 안정적인 데이터 수집 가능")
-        else:
-            self.upbit = None
-            print("⚠️ 업비트 API 키 없음 - 공개 API 사용 (제한적)")
 
         # 업비트 주요 코인 리스트 (원화 마켓)
         self.crypto_list = [
@@ -204,126 +192,32 @@ class UpbitVolatilityBollingerBacktest:
         return compute_indicators(data, self.params)
 
     def get_crypto_data(self, symbol: str, days: int = 1100) -> Optional[pd.DataFrame]:
-        """업비트에서 코인 데이터 가져오기 (강화된 오류 처리)"""
+        """업비트 일봉 OHLCV를 가져온다. 실패하면 None.
+
+        pyupbit.get_ohlcv는 count가 200을 넘으면 내부에서 나눠 받아온다.
+        네트워크 오류는 최대 3회 재시도하고, 캔들이 지표 계산에 필요한 수보다 적으면 바로 포기한다.
+        """
         max_retries = 3
-
-        for attempt in range(max_retries):
+        for attempt in range(1, max_retries + 1):
             try:
-                if attempt > 0:
-                    time.sleep(1)  # 재시도 전 대기
-
+                data = pyupbit.get_ohlcv(symbol, interval="day", count=days)
+            except Exception as e:
+                print(f"\n⚠️ {symbol} 데이터 요청 실패 ({attempt}/{max_retries}): {e}")
                 data = None
 
-                # 방법 1: API 키가 있으면 인증된 API 시도
-                if self.upbit and attempt < 2:
-                    try:
-                        data = pyupbit.get_ohlcv(symbol, interval="day", count=days, to=None)
-                    except Exception as e:
-                        if "Length mismatch" in str(e):
-                            pass
-
-                # 방법 2: 공개 API 시도 (더 작은 데이터 요청)
-                if data is None or data.empty:
-                    try:
-                        # 더 작은 단위로 요청
-                        count = min(days, 200) if attempt == 0 else min(days, 100)
-                        data = pyupbit.get_ohlcv(symbol, interval="day", count=count)
-                    except Exception as e:
-                        if "Length mismatch" in str(e):
-                            continue
-
-                # 방법 3: 최소 데이터로 재시도
-                if (data is None or data.empty) and attempt == max_retries - 1:
-                    try:
-                        data = pyupbit.get_ohlcv(symbol, interval="day", count=50)
-                    except:
-                        pass
-
-                if data is None or data.empty:
-                    if attempt == max_retries - 1:
-                        return None
-                    continue
-
-                # 데이터 전처리 및 검증
-                try:
-                    # 1. 인덱스를 datetime으로 변환
-                    if not isinstance(data.index, pd.DatetimeIndex):
-                        data.index = pd.to_datetime(data.index)
-
-                    # 2. 컬럼 정리
-                    if len(data.columns) >= 5:
-                        # 첫 5개 컬럼만 사용
-                        data = data.iloc[:, :5].copy()
-                        data.columns = ["open", "high", "low", "close", "volume"]
-                    else:
-                        # 컬럼명 매핑
-                        col_mapping = {}
-                        for i, col in enumerate(data.columns):
-                            if i == 0 or "open" in str(col).lower():
-                                col_mapping[col] = "open"
-                            elif i == 1 or "high" in str(col).lower():
-                                col_mapping[col] = "high"
-                            elif i == 2 or "low" in str(col).lower():
-                                col_mapping[col] = "low"
-                            elif i == 3 or "close" in str(col).lower():
-                                col_mapping[col] = "close"
-                            elif i == 4 or "volume" in str(col).lower():
-                                col_mapping[col] = "volume"
-                        data = data.rename(columns=col_mapping)
-
-                    # 3. 필수 컬럼 확인
-                    required_cols = ["open", "high", "low", "close", "volume"]
-                    missing_cols = [col for col in required_cols if col not in data.columns]
-                    if missing_cols:
-                        if attempt == max_retries - 1:
-                            return None
-                        continue
-
-                    # 4. 데이터 길이 불일치 해결
-                    lengths = [len(data[col].dropna()) for col in required_cols]
-                    min_length = min(lengths)
-                    max_length = max(lengths)
-
-                    if max_length > min_length:
-                        # 모든 컬럼을 최소 길이로 맞춤
-                        data = data.iloc[:min_length].copy()
-
-                    # 5. NaN 값 처리
-                    data = data.dropna()
-                    if len(data) < self.params.min_rows:
-                        if attempt == max_retries - 1:
-                            return None
-                        continue
-
-                    # 6. 데이터 타입 변환
-                    for col in required_cols:
-                        data[col] = pd.to_numeric(data[col], errors="coerce")
-
-                    # 7. 최종 검증
-                    if data["close"].isna().sum() > len(data) * 0.1:
-                        if attempt == max_retries - 1:
-                            return None
-                        continue
-
-                    # 8. 가격 검증
-                    avg_price = data["close"].mean()
-                    if avg_price < 1:
-                        if attempt == max_retries - 1:
-                            return None
-                        continue
-
-                    return data
-
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        return None
-                    continue
-
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    return None
+            if data is None or data.empty:
+                if attempt < max_retries:
+                    time.sleep(1)
                 continue
 
+            data = data[["open", "high", "low", "close", "volume"]]
+            data = data.apply(pd.to_numeric, errors="coerce").dropna()
+            if len(data) < self.params.min_rows:
+                print(f"\n⚠️ {symbol}: 캔들 {len(data)}개로는 부족 (최소 {self.params.min_rows}개)")
+                return None
+            return data
+
+        print(f"\n❌ {symbol}: {max_retries}회 시도 후 데이터를 받지 못했습니다.")
         return None
 
     def run_single_backtest(self, symbol: str, days: int = 1100) -> Optional[Dict]:
@@ -348,6 +242,7 @@ class UpbitVolatilityBollingerBacktest:
             return result
 
         except Exception as e:
+            print(f"\n❌ {symbol} 백테스트 중 오류: {e}")
             return None
 
     def _execute_backtest(self, data: pd.DataFrame, symbol: str) -> Dict:
@@ -532,44 +427,21 @@ class UpbitVolatilityBollingerBacktest:
 
         print(f"🔍 {len(cryptos_to_test)}개 코인 백테스트 시작...")
         print(f"📅 기간: 최근 {days}일 (약 {days // 365}년)")
-        print(f"⚠️  중단하려면 Ctrl+C를 누르세요")
+        print("⚠️  중단하려면 Ctrl+C를 누르세요")
         print("-" * 80)
 
         try:
             for i, symbol in enumerate(cryptos_to_test):
                 print(f"진행: {i + 1:2d}/{len(cryptos_to_test)} - {symbol:10s} ... ", end="")
 
-                retry_count = 0
-                max_retries = 3
-                success = False
-
-                while retry_count < max_retries and not success:
-                    try:
-                        result = self.run_single_backtest(symbol, days)
-                        if result:
-                            results.append(result)
-                            print(f"완료 (수익률: {result['total_return']:6.2f}%)")
-                            success = True
-                        else:
-                            if retry_count < max_retries - 1:
-                                print(
-                                    f"데이터 부족 - 재시도 {retry_count + 1}/{max_retries}", end=""
-                                )
-                                time.sleep(1)
-                            retry_count += 1
-
-                    except KeyboardInterrupt:
-                        print(f"\n⏹️  백테스트가 중단되었습니다.")
-                        raise
-                    except Exception as e:
-                        if retry_count < max_retries - 1:
-                            print(f"오류 - 재시도 {retry_count + 1}/{max_retries}", end="")
-                            time.sleep(1)
-                        retry_count += 1
-
-                if not success:
+                # 네트워크 재시도는 get_crypto_data 안에서 한다. 여기서 또 반복하지 않는다.
+                result = self.run_single_backtest(symbol, days)
+                if result:
+                    results.append(result)
+                    print(f"완료 (수익률: {result['total_return']:6.2f}%)")
+                else:
                     failed_cryptos.append(symbol)
-                    print(" - 최종 실패")
+                    print("실패")
 
                 if i < len(cryptos_to_test) - 1:
                     time.sleep(0.1)
@@ -582,18 +454,18 @@ class UpbitVolatilityBollingerBacktest:
                     print("-" * 80)
 
         except KeyboardInterrupt:
-            print(f"\n⏹️  다중 코인 백테스트가 중단되었습니다.")
+            print("\n⏹️  다중 코인 백테스트가 중단되었습니다.")
 
         # 최종 결과 요약
-        print(f"\n" + "=" * 80)
-        print(f"📊 백테스트 완료 요약")
-        print(f"=" * 80)
+        print("\n" + "=" * 80)
+        print("📊 백테스트 완료 요약")
+        print("=" * 80)
         print(f"✅ 성공: {len(results)}개 코인")
         print(f"❌ 실패: {len(failed_cryptos)}개 코인")
         print(f"📈 성공률: {len(results) / len(cryptos_to_test) * 100:.1f}%")
 
         if failed_cryptos:
-            print(f"\n❌ 실패한 코인들:")
+            print("\n❌ 실패한 코인들:")
             for i, symbol in enumerate(failed_cryptos):
                 print(f"   {i + 1}. {symbol}")
 
@@ -862,11 +734,11 @@ class UpbitVolatilityBollingerBacktest:
 
     def _print_summary_statistics(self, results_df: pd.DataFrame):
         """요약 통계 출력"""
-        print(f"\n📊 백테스트 결과 요약:")
+        print("\n📊 백테스트 결과 요약:")
         print("-" * 140)
         print(results_df.to_string(index=False))
 
-        print(f"\n📈 전체 통계:")
+        print("\n📈 전체 통계:")
         print("-" * 70)
 
         total_cryptos = len(results_df)
@@ -902,7 +774,7 @@ class UpbitVolatilityBollingerBacktest:
         portfolio_return = avg_return
         portfolio_profit = (portfolio_return / 100) * self.initial_capital
 
-        print(f"\n💼 포트폴리오 시뮬레이션 (동일 비중 투자):")
+        print("\n💼 포트폴리오 시뮬레이션 (동일 비중 투자):")
         print(f"   예상 수익률:    {portfolio_return:>10.2f}%")
         print(f"   예상 수익금:    {portfolio_profit:>10,.0f}원")
         print(f"   예상 최종자산:  {self.initial_capital + portfolio_profit:>10,.0f}원")
@@ -975,7 +847,7 @@ class UpbitVolatilityBollingerBacktest:
         else:
             risk_grade = "🔴 높음"
 
-        print(f"\n📊 리스크 분석:")
+        print("\n📊 리스크 분석:")
         print("-" * 50)
         print(f"📈 평균 수익률:    {mean_return:8.2f}%")
         print(f"📊 변동성:        {std_return:8.2f}%")
@@ -1136,18 +1008,18 @@ def main():
     )
 
     if results:
-        print(f"\n✅ 분석 완료!")
+        print("\n✅ 분석 완료!")
 
         # 투자 권장사항
         summary_results = results.get("summary_results")
         if not summary_results.empty:
             top_performers = summary_results.head(3)
-            print(f"\n🏆 투자 추천 코인 (상위 3개):")
+            print("\n🏆 투자 추천 코인 (상위 3개):")
             for i, (_, row) in enumerate(top_performers.iterrows()):
                 print(f"{i + 1}. {row['Symbol']}: {row['Total_Return(%)']}% 수익률")
 
     else:
-        print(f"\n❌ 분석 실패")
+        print("\n❌ 분석 실패")
 
 
 if __name__ == "__main__":

@@ -94,3 +94,60 @@ def test_strategy_mode_thresholds(
     # 공통 파라미터는 모드와 무관하다.
     assert (p.bb_period, p.bb_std_multiplier, p.rsi_period) == (20, 2.0, 14)
     assert (p.volatility_lookback, p.volatility_threshold) == (50, 0.2)
+
+
+# ---------------------------------------------------------------------------
+# get_crypto_data: pyupbit를 흉내 내서 재시도와 전처리를 검증한다.
+# ---------------------------------------------------------------------------
+
+
+def _ohlcv(n):
+    index = pd.date_range("2024-01-01", periods=n, freq="D")
+    return pd.DataFrame(
+        {"open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10.0, "value": 15.0},
+        index=index,
+    )
+
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    monkeypatch.setattr("upbit_backtest_strategy.time.sleep", lambda seconds: None)
+
+
+def test_get_crypto_data_keeps_the_five_ohlcv_columns(backtest, monkeypatch):
+    monkeypatch.setattr("upbit_backtest_strategy.pyupbit.get_ohlcv", lambda *a, **k: _ohlcv(120))
+    df = backtest.get_crypto_data("KRW-BTC", days=120)
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+    assert len(df) == 120
+
+
+def test_get_crypto_data_retries_transient_failures(backtest, monkeypatch, no_sleep):
+    calls = []
+
+    def flaky(*args, **kwargs):
+        calls.append(1)
+        if len(calls) < 3:
+            raise ConnectionError("boom")
+        return _ohlcv(100)
+
+    monkeypatch.setattr("upbit_backtest_strategy.pyupbit.get_ohlcv", flaky)
+    assert backtest.get_crypto_data("KRW-BTC") is not None
+    assert len(calls) == 3
+
+
+def test_get_crypto_data_gives_up_after_three_empty_responses(backtest, monkeypatch, no_sleep):
+    calls = []
+    monkeypatch.setattr(
+        "upbit_backtest_strategy.pyupbit.get_ohlcv", lambda *a, **k: calls.append(1) or None
+    )
+    assert backtest.get_crypto_data("KRW-BTC") is None
+    assert len(calls) == 3
+
+
+def test_get_crypto_data_rejects_short_history_without_retrying(backtest, monkeypatch, no_sleep):
+    calls = []
+    monkeypatch.setattr(
+        "upbit_backtest_strategy.pyupbit.get_ohlcv", lambda *a, **k: calls.append(1) or _ohlcv(30)
+    )
+    assert backtest.get_crypto_data("KRW-NEW") is None
+    assert len(calls) == 1  # 상장 직후 코인은 재시도해도 캔들이 늘지 않는다
