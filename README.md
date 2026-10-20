@@ -1,5 +1,9 @@
 # upbit-bollinger-squeeze
 
+[![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![pyupbit](https://img.shields.io/badge/pyupbit-093687)](https://github.com/sharebook-kr/pyupbit)
+[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots)
+
 업비트 원화 마켓을 대상으로 한 변동성 압축 + 볼린저 밴드 신호 봇. 일봉 기준으로 신호를 계산해 텔레그램으로 알린다.
 
 ## 설치
